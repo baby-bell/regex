@@ -7,9 +7,6 @@ use ::std::collections::HashMap;
 use ::std::ops::Deref;
 use ::std::ffi::CStr;
 use ::std::ptr;
-use ::std::str;
-use ::std::slice;
-
 
 pub struct Regex {
     re: bytes::Regex,
@@ -34,6 +31,35 @@ const RURE_DEFAULT_FLAGS: u32 = RURE_FLAG_UNICODE;
 pub struct rure_match {
     pub start: size_t,
     pub end: size_t,
+}
+
+#[repr(C)]
+pub struct rure_bytes {
+    pub ptr: *const u8,
+    pub len: size_t,
+}
+
+impl rure_bytes {
+    pub unsafe fn into_slice<'a>(self) -> &'a [u8] {
+        use ::std::slice;
+
+        slice::from_raw_parts(self.ptr, self.len)
+    }
+
+    pub unsafe fn to_str<'a>(self) -> Result<&'a str, ::std::str::Utf8Error> {
+        use ::std::str;
+
+        str::from_utf8(self.into_slice())
+    }
+}
+
+impl ::std::clone::Clone for rure_bytes {
+    fn clone(&self) -> Self {
+        rure_bytes {
+            ptr: self.ptr,
+            len: self.len
+        }
+    }
 }
 
 pub struct Captures(Vec<Option<usize>>);
@@ -61,10 +87,10 @@ impl Default for Options {
 ffi_fn! {
     fn rure_compile_must(pattern: *const c_char) -> *const Regex {
         let len = unsafe { CStr::from_ptr(pattern).to_bytes().len() };
-        let pat = pattern as *const u8;
+        let pat = rure_bytes { ptr: pattern as *const u8, len: len };
         let mut err = Error::new(ErrorKind::None);
         let re = rure_compile(
-            pat, len, RURE_DEFAULT_FLAGS, ptr::null(), &mut err);
+            pat, RURE_DEFAULT_FLAGS, ptr::null(), &mut err);
         if err.is_err() {
             let _ = writeln!(&mut io::stderr(), "{}", err);
             let _ = writeln!(
@@ -77,14 +103,12 @@ ffi_fn! {
 
 ffi_fn! {
     fn rure_compile(
-        pattern: *const u8,
-        length: size_t,
+        pattern: rure_bytes,
         flags: u32,
         options: *const Options,
         error: *mut Error,
     ) -> *const Regex {
-        let pat = unsafe { slice::from_raw_parts(pattern, length) };
-        let pat = match str::from_utf8(pat) {
+        let pat = match unsafe { pattern.to_str() } {
             Ok(pat) => pat,
             Err(err) => {
                 unsafe {
@@ -142,12 +166,11 @@ ffi_fn! {
 ffi_fn! {
     fn rure_is_match(
         re: *const Regex,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         start: size_t,
     ) -> bool {
         let re = unsafe { &*re };
-        let haystack = unsafe { slice::from_raw_parts(haystack, len) };
+        let haystack = unsafe { haystack.into_slice() };
         re.is_match_at(haystack, start)
     }
 }
@@ -155,13 +178,12 @@ ffi_fn! {
 ffi_fn! {
     fn rure_find(
         re: *const Regex,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         start: size_t,
         match_info: *mut rure_match,
     ) -> bool {
         let re = unsafe { &*re };
-        let haystack = unsafe { slice::from_raw_parts(haystack, len) };
+        let haystack = unsafe { haystack.into_slice() };
         re.find_at(haystack, start).map(|(s, e)| unsafe {
             if !match_info.is_null() {
                 (*match_info).start = s;
@@ -174,13 +196,12 @@ ffi_fn! {
 ffi_fn! {
     fn rure_find_captures(
         re: *const Regex,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         start: size_t,
         captures: *mut Captures,
     ) -> bool {
         let re = unsafe { &*re };
-        let haystack = unsafe { slice::from_raw_parts(haystack, len) };
+        let haystack = unsafe { haystack.into_slice() };
         let slots = unsafe { &mut (*captures).0 };
         re.read_captures_at(slots, haystack, start).is_some()
     }
@@ -189,13 +210,12 @@ ffi_fn! {
 ffi_fn! {
     fn rure_shortest_match(
         re: *const Regex,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         start: size_t,
         end: *mut usize,
     ) -> bool {
         let re = unsafe { &*re };
-        let haystack = unsafe { slice::from_raw_parts(haystack, len) };
+        let haystack = unsafe { haystack.into_slice() };
         match re.shortest_match_at(haystack, start) {
             None => false,
             Some(i) => {
@@ -246,13 +266,12 @@ ffi_fn! {
 ffi_fn! {
     fn rure_iter_next(
         it: *mut Iter,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         match_info: *mut rure_match,
     ) -> bool {
         let it = unsafe { &mut *it };
         let re = unsafe { &*it.re };
-        let text = unsafe { slice::from_raw_parts(haystack, len) };
+        let text = unsafe { haystack.into_slice() };
         if it.last_end > text.len() {
             return false;
         }
@@ -268,7 +287,7 @@ ffi_fn! {
             // Don't accept empty matches immediately following a match.
             // Just move on to the next match.
             if Some(e) == it.last_match {
-                return rure_iter_next(it, haystack, len, match_info);
+                return rure_iter_next(it, haystack, match_info);
             }
         } else {
             it.last_end = e;
@@ -287,14 +306,13 @@ ffi_fn! {
 ffi_fn! {
     fn rure_iter_next_captures(
         it: *mut Iter,
-        haystack: *const u8,
-        len: size_t,
+        haystack: rure_bytes,
         captures: *mut Captures,
     ) -> bool {
         let it = unsafe { &mut *it };
         let re = unsafe { &*it.re };
         let slots = unsafe { &mut (*captures).0 };
-        let text = unsafe { slice::from_raw_parts(haystack, len) };
+        let text = unsafe { haystack.into_slice() };
         if it.last_end > text.len() {
             return false;
         }
@@ -310,7 +328,7 @@ ffi_fn! {
             // Don't accept empty matches immediately following a match.
             // Just move on to the next match.
             if Some(e) == it.last_match {
-                return rure_iter_next_captures(it, haystack, len, captures);
+                return rure_iter_next_captures(it, haystack, captures);
             }
         } else {
             it.last_end = e;

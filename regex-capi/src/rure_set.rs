@@ -1,4 +1,5 @@
 use ::error::{Error, ErrorKind};
+use ::rure::rure_bytes;
 
 use ::regex::bytes::RegexSet;
 use ::libc::{c_char, size_t};
@@ -7,11 +8,6 @@ use ::std::slice;
 use ::std::ptr;
 use ::std::str;
 
-#[repr(C)]
-pub struct rure_bytes {
-    pub buf: *const u8,
-    pub len: size_t,
-}
 
 ffi_fn! {
     fn rure_set_compile(patterns: *const rure_bytes,
@@ -22,8 +18,7 @@ ffi_fn! {
         let mut str_pats = Vec::with_capacity(patterns_len);
 
         for byte_struct in pats {
-            let byte_slice = unsafe { slice::from_raw_parts(byte_struct.buf, byte_struct.len) };
-            let str_pat = match str::from_utf8(byte_slice) {
+            let str_pat = match unsafe { byte_struct.to_str() } {
                 Ok(s) => s,
                 Err(e) => {
                     unsafe {
@@ -39,7 +34,7 @@ ffi_fn! {
         }
 
         match RegexSet::new(str_pats) {
-            Ok(r) => Box::into_raw(Box::new(r));
+            Ok(r) => Box::into_raw(Box::new(r)),
             Err(e) => {
                 unsafe {
                     if !error.is_null() {
@@ -53,7 +48,16 @@ ffi_fn! {
 }
 
 ffi_fn! {
-    fn rure_set_free(rs: *const RureSet) {
-        unsafe { Box::from_raw(rs as *mut RureSet); }
+    fn rure_set_free(rs: *const RegexSet) {
+        unsafe { Box::from_raw(rs as *mut RegexSet); }
+    }
+}
+
+ffi_fn! {
+    fn rure_set_is_match(rs: *const RegexSet, haystack: rure_bytes) -> bool {
+        let haystack = unsafe { haystack.into_slice() };
+        let pattern = unsafe { &*rs };
+
+        pattern.is_match(haystack)
     }
 }

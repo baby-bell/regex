@@ -40,6 +40,14 @@ typedef struct rure rure;
 typedef struct rure_options rure_options;
 
 /*
+ * rure_set is the type of a compiled regular expression set containing
+ * multiple regular expressions. It is more efficient to use a rure_set
+ * to check if any one regular expression matches, as only one pass over
+ * the data need be made.
+ */
+typedef struct rure_set rure_set;
+
+/*
  * The flags listed below can be used in rure_compile to set the default
  * flags. All flags can otherwise be toggled in the expression itself using
  * standard syntax, e.g., `(?i)` turns case insensitive matching on and `(?-i)`
@@ -69,6 +77,16 @@ typedef struct rure_match {
     /* The end position. */
     size_t end;
 } rure_match;
+
+/*
+ * rure_bytes represents a byte array, as a pointer and length pair.
+ */
+typedef struct rure_bytes {
+    /* pointer to the array */
+    const uint8_t *ptr;
+    /* length of the array */
+    size_t len;
+} rure_bytes;
 
 /*
  * rure_captures represents storage for sub-capture locations of a match.
@@ -147,7 +165,7 @@ rure *rure_compile_must(const char *pattern);
  * The compiled expression returned may be used from multiple threads
  * simultaneously.
  */
-rure *rure_compile(const uint8_t *pattern, size_t length,
+rure *rure_compile(rure_bytes pattern,
                    uint32_t flags, rure_options *options,
                    rure_error *error);
 
@@ -176,7 +194,7 @@ void rure_free(rure *re);
  * N.B. The performance of this search is not impacted by the presence of
  * capturing groups in your regular expression.
  */
-bool rure_is_match(rure *re, const uint8_t *haystack, size_t length,
+bool rure_is_match(rure *re, rure_bytes haystack,
                    size_t start);
 
 /*
@@ -199,7 +217,7 @@ bool rure_is_match(rure *re, const uint8_t *haystack, size_t length,
  * N.B. The performance of this search is not impacted by the presence of
  * capturing groups in your regular expression.
  */
-bool rure_find(rure *re, const uint8_t *haystack, size_t length,
+bool rure_find(rure *re, rure_bytes haystack,
                size_t start, rure_match *match);
 
 /*
@@ -227,7 +245,7 @@ bool rure_find(rure *re, const uint8_t *haystack, size_t length,
  * capturing groups. If you're using this function, it may be beneficial to
  * use non-capturing groups (e.g., `(?:re)`) where possible.
  */
-bool rure_find_captures(rure *re, const uint8_t *haystack, size_t length,
+bool rure_find_captures(rure *re, rure_bytes haystack,
                         size_t start, rure_captures *captures);
 
 /*
@@ -252,7 +270,7 @@ bool rure_find_captures(rure *re, const uint8_t *haystack, size_t length,
  * N.B. The performance of this search is not impacted by the presence of
  * capturing groups in your regular expression.
  */
-bool rure_shortest_match(rure *re, const uint8_t *haystack, size_t length,
+bool rure_shortest_match(rure *re, rure_bytes haystack,
                          size_t start, size_t *end);
 
 /*
@@ -301,7 +319,7 @@ void rure_iter_free(rure_iter *it);
  * N.B. The performance of this search is not impacted by the presence of
  * capturing groups in your regular expression.
  */
-bool rure_iter_next(rure_iter *it, const uint8_t *haystack, size_t length,
+bool rure_iter_next(rure_iter *it, rure_bytes haystack,
                     rure_match *match);
 
 /*
@@ -327,7 +345,7 @@ bool rure_iter_next(rure_iter *it, const uint8_t *haystack, size_t length,
  * use non-capturing groups (e.g., `(?:re)`) where possible.
  */
 bool rure_iter_next_captures(rure_iter *it,
-                             const uint8_t *haystack, size_t length,
+                             rure_bytes haystack,
                              rure_captures *captures);
 
 /*
@@ -443,6 +461,25 @@ void rure_error_free(rure_error *err);
  */
 const char *rure_error_message(rure_error *err);
 
+/*
+ * Compiles a new regular expression set.
+ *
+ * Each pattern in patterns must be valid UTF-8. If an error occurs, NULL
+ * is returned, and if err is non-null, then information about the error
+ * will be copied into it. Otherwise, err will be left unchanged.
+ */
+rure_set *rure_set_compile(rure_bytes *patterns, size_t num_patterns, rure_error *err);
+
+
+/*
+ * rure_set_free frees a rure_set. Call this function at most once.
+ */
+void rure_set_free(rure_set *rs);
+
+/*
+ * Check if any regular expression in pat matches haystack.
+ */
+bool rure_set_is_match(rure_set *pat, rure_bytes haystack);
 #ifdef __cplusplus
 }
 #endif
